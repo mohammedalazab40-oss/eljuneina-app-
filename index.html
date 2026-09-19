@@ -377,6 +377,62 @@ function updateSyncBadge() {
   el.className = "hidden sm:inline text-[11px] " + info.cls;
 }
 
+// ---- Safety net: keep a copy of THIS device's data before a remote copy replaces it ----
+// (rescue.html can download these; nothing is ever lost silently.)
+const LOCAL_BACKUP_PREFIX = "eljuneina_local_backup_";
+const LOCAL_BACKUP_KEEP = 2;
+function backupLocalStateBeforeReplace_(reason) {
+  try {
+    const current = safeStorageGet(localStorage, STORAGE_KEY);
+    if (!current) return;
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf(LOCAL_BACKUP_PREFIX) === 0) keys.push(k);
+    }
+    keys.sort();
+    // identical to the newest backup? nothing new to keep
+    if (keys.length && safeStorageGet(localStorage, keys[keys.length - 1]) === current) return;
+    while (keys.length >= LOCAL_BACKUP_KEEP) safeStorageRemove(localStorage, keys.shift());
+    const key = LOCAL_BACKUP_PREFIX + new Date().toISOString().replace(/[:.]/g, "-") + "_" + (reason || "pull");
+    if (!safeStorageSet(localStorage, key, current)) {
+      // storage full: drop older backups and retry once
+      keys.forEach((k) => safeStorageRemove(localStorage, k));
+      safeStorageSet(localStorage, key, current);
+    }
+  } catch (e) { /* never block sync because of a backup problem */ }
+}
+
+// Reads the Apps Script Web App with fetch() and NO cookies (credentials: "omit").
+// Why: a <script>/JSONP load sends the browser's Google cookies, and when the browser
+// is signed in to more than one Google account, Google answers with an HTML
+// "unable to open the file" page instead of our data — the app then shows Offline.
+// An anonymous fetch() has no such problem and works on every device. JSONP is kept
+// only as a fallback (e.g. the page opened from file://).
+async function remoteGet_(url, timeoutMs) {
+  const sep = url.indexOf("?") === -1 ? "?" : "&";
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = setTimeout(() => { if (ctrl) ctrl.abort(); }, timeoutMs || 45000);
+  try {
+    const res = await fetch(url + sep + "_=" + Date.now(), {
+      method: "GET",
+      credentials: "omit",
+      redirect: "follow",
+      cache: "no-store",
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+    const text = (await res.text()).trim();
+    let body = text;
+    const m = text.match(/^[\w$.]+\(([\s\S]*)\)\s*;?\s*$/); // tolerate a JSONP-wrapped reply
+    if (m && text.charAt(0) !== "{" && text.charAt(0) !== "[") body = m[1];
+    return JSON.parse(body);
+  } catch (e) {
+    return jsonpRequest_(url, 20000); // last resort
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Reads a Google Apps Script Web App via JSONP (a <script> tag), not fetch(). Apps
 // Script issues an internal cross-origin redirect that many browsers refuse to
 // expose to a plain fetch() when the page's origin is "null" (a local file opened
@@ -432,11 +488,12 @@ async function pushRemoteState() {
     await fetch(cfg.url, {
       method: "POST",
       mode: "no-cors",
+      credentials: "omit",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({ token: cfg.token || "", baseRevision, state }),
     });
     await new Promise((r) => setTimeout(r, 900)); // give Apps Script a moment to finish writing
-    const data = await jsonpRequest_(cfg.url + "?token=" + encodeURIComponent(cfg.token || ""));
+    const data = await remoteGet_(cfg.url + "?token=" + encodeURIComponent(cfg.token || ""));
     if (!data || !data.ok) {
       syncStatus = "error";
       if (data && data.error === "UNAUTHORIZED") alert(t("sync.unauthorizedAlert"));
@@ -451,6 +508,7 @@ async function pushRemoteState() {
       // Either our write was rejected as stale, or someone else's write landed around
       // the same time. Either way, adopt the current server copy as the source of
       // truth — the local change that triggered this push may need to be redone.
+      if (data.state) backupLocalStateBeforeReplace_("conflict");
       state = data.state ? { ...clone(DEFAULT_STATE), ...data.state } : state;
       normalizeUsers(state);
       safeStorageSet(localStorage, STORAGE_KEY, JSON.stringify(state));
@@ -475,7 +533,7 @@ async function pullRemoteState(opts) {
   if (!cfg || !cfg.url) { syncStatus = "off"; updateSyncBadge(); return; }
   if (modalContent) return; // don't clobber whatever the user is typing right now
   try {
-    const data = await jsonpRequest_(cfg.url + "?token=" + encodeURIComponent(cfg.token || ""));
+    const data = await remoteGet_(cfg.url + "?token=" + encodeURIComponent(cfg.token || ""));
     if (!data.ok) {
       if (data.error === "UNAUTHORIZED" && !silent) alert(t("sync.unauthorizedAlert"));
       syncStatus = "error";
@@ -489,6 +547,7 @@ async function pullRemoteState(opts) {
       return;
     }
     if (data.revision > getLastSyncedRevision()) {
+      backupLocalStateBeforeReplace_("pull");
       state = { ...clone(DEFAULT_STATE), ...data.state };
       normalizeUsers(state);
       safeStorageSet(localStorage, STORAGE_KEY, JSON.stringify(state));

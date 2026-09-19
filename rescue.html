@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eljuneina - إنقاذ بيانات الجهاز</title>
+<style>
+  body{font-family:Tahoma,Arial,sans-serif;background:#f4f1e6;color:#2b2b1f;margin:0;padding:20px;line-height:1.7}
+  .box{max-width:560px;margin:auto;background:#fff;border-radius:14px;padding:22px;box-shadow:0 4px 18px rgba(0,0,0,.08)}
+  h1{font-size:20px;color:#5b6b2f;margin:0 0 8px}
+  input{width:100%;box-sizing:border-box;padding:12px;font-size:16px;border:1px solid #bbb;border-radius:8px;margin:8px 0 14px}
+  button{width:100%;padding:14px;font-size:17px;border:0;border-radius:10px;background:#5b6b2f;color:#fff;margin-bottom:10px;cursor:pointer}
+  button.alt{background:#c9a227;color:#222}
+  #info{background:#f7f7f0;border-radius:8px;padding:10px;font-size:14px;direction:ltr;text-align:left;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto}
+  .ok{color:#1b7a2f;font-weight:bold}.bad{color:#b3261e;font-weight:bold}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>إنقاذ بيانات هذا الجهاز</h1>
+  <p>الصفحة دي بتقرأ البيانات المحفوظة على الجهاز ده فقط وتنزّلها كملف. <b>مش بتمسح ولا بتعدّل أي حاجة.</b></p>
+  <label>اسم الجهاز / المستخدم (مثال: cashier-mobile)</label>
+  <input id="dev" placeholder="اكتب اسم يميّز الجهاز">
+  <button onclick="dl()">⬇️ تنزيل ملف البيانات</button>
+  <button class="alt" onclick="share()">📤 مشاركة الملف (واتساب / إيميل)</button>
+  <button class="alt" onclick="copy()">📋 نسخ البيانات كنص</button>
+  <p id="msg"></p>
+  <div id="info"></div>
+</div>
+<script>
+function collect(){
+  const d={};
+  try{
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);d[k]=localStorage.getItem(k);}
+  }catch(e){}
+  return d;
+}
+function payload(){
+  return JSON.stringify({device:document.getElementById('dev').value||'unknown',
+    exportedAt:new Date().toISOString(),origin:location.origin,ua:navigator.userAgent,localStorage:collect()});
+}
+function fname(){
+  const n=(document.getElementById('dev').value||'device').replace(/[^\w\u0600-\u06FF-]+/g,'_');
+  return 'eljuneina-rescue-'+n+'-'+new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')+'.json';
+}
+function say(t,ok){const m=document.getElementById('msg');m.textContent=t;m.className=ok?'ok':'bad';}
+function dl(){
+  try{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([payload()],{type:'application/json'}));
+    a.download=fname();document.body.appendChild(a);a.click();a.remove();
+    say('تم تنزيل الملف ✅ ابعته لمحمد',true);
+  }catch(e){say('فشل التنزيل، جرّب "مشاركة" أو "نسخ"',false);}
+}
+async function share(){
+  try{
+    const f=new File([payload()],fname(),{type:'application/json'});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:'Eljuneina rescue'});say('تمت المشاركة ✅',true);}
+    else say('المشاركة غير مدعومة هنا، استخدم التنزيل أو النسخ',false);
+  }catch(e){say('لم تتم المشاركة',false);}
+}
+async function copy(){
+  try{await navigator.clipboard.writeText(payload());say('تم النسخ ✅ الصقه في واتساب أو إيميل',true);}
+  catch(e){say('فشل النسخ',false);}
+}
+(function(){
+  const d=collect(),keys=Object.keys(d);
+  let t='Origin: '+location.origin+'\nKeys found: '+keys.length+'\n\n';
+  keys.forEach(k=>{t+=k+'  →  '+(d[k]||'').length.toLocaleString()+' chars\n';});
+  if(!keys.length)t+='⚠️ لا توجد بيانات محفوظة على هذا المتصفح لهذا الموقع.';
+  document.getElementById('info').textContent=t;
+})();
+</script>
+</body>
+</html>
