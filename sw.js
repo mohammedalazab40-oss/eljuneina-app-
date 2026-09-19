@@ -1,10 +1,10 @@
-// Eljuneina Villas ERP — service worker (v3)
+// Eljuneina Villas ERP — service worker (v4)
 // index.html is fetched NETWORK-FIRST so every device gets app updates immediately;
 // the cached copy is only used when there is no connection.
 // Google Sheets sync requests (cross-origin) are never touched.
 
-const CACHE_NAME = 'eljuneina-villas-v3';
-const APP_SHELL = ['./', './index.html'];
+const CACHE_NAME = 'eljuneina-villas-v4';
+const APP_SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

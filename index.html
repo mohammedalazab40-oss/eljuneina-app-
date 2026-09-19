@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>فيلات الجُنينة | Eljuneina Villas</title>
 <meta name="theme-color" content="#D9C24A" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icon-192.png" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -4148,46 +4150,9 @@ function bootApp() {
 
 bootApp();
 
-// ---- PWA: manifest + apple-touch-icon, generated inline so we don't need
-// separate manifest.json/icon files. Reuses the same logo image already
-// embedded in this page as the favicon. (The service worker, below, is the
-// one thing that CANNOT be inlined this way — browsers refuse to register a
-// service worker whose script is a blob: URL, so sw.js must stay a real file.)
-(function setupPwaManifestAndIcons() {
-  try {
-    var favicon = document.querySelector('link[rel="icon"]');
-    var iconHref = favicon ? favicon.href : "";
-
-    var manifest = {
-      name: "فيلات الجُنينة | Eljuneina Villas",
-      short_name: "Eljuneina Villas",
-      description: "Restaurant + Tourism + Villas ERP for Eljuneina Villas",
-      start_url: "./index.html",
-      scope: "./",
-      display: "standalone",
-      orientation: "any",
-      background_color: "#F8F5E4",
-      theme_color: "#D9C24A",
-      lang: "ar",
-      dir: "rtl",
-      icons: iconHref ? [
-        { src: iconHref, sizes: "512x512", type: "image/jpeg", purpose: "any maskable" }
-      ] : []
-    };
-    var manifestBlob = new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" });
-    var manifestLink = document.createElement("link");
-    manifestLink.rel = "manifest";
-    manifestLink.href = URL.createObjectURL(manifestBlob);
-    document.head.appendChild(manifestLink);
-
-    if (favicon) {
-      var appleIcon = document.createElement("link");
-      appleIcon.rel = "apple-touch-icon";
-      appleIcon.href = favicon.href;
-      document.head.appendChild(appleIcon);
-    }
-  } catch (e) { /* non-fatal */ }
-})();
+// ---- PWA: manifest + icons are REAL files (manifest.json, icon-192.png, icon-512.png)
+// linked from <head>. A blob:-generated manifest is NOT accepted by Chrome for install —
+// the phone then only creates a browser shortcut instead of a real app.
 
 // ---- PWA: service worker registration (enables install + offline shell caching) ----
 if ('serviceWorker' in navigator) {

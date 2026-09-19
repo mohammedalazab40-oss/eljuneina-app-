@@ -1,8 +1,9 @@
 {
+  "id": "./",
   "name": "فيلات الجُنينة | Eljuneina Villas",
-  "short_name": "Eljuneina Villas",
+  "short_name": "Eljuneina",
   "description": "Restaurant + Tourism + Villas ERP for Eljuneina Villas",
-  "start_url": "./index.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
@@ -11,17 +12,8 @@
   "lang": "ar",
   "dir": "rtl",
   "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
