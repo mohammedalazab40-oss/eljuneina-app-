@@ -3,13 +3,10 @@
 // even with no network connection. Does NOT touch the Google Sheets sync
 // requests (Apps Script) — those still need a live connection to sync.
 
-const CACHE_NAME = 'eljuneina-villas-v1';
+const CACHE_NAME = 'eljuneina-villas-v2';
 const APP_SHELL = [
   './',
   './index.html',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
