@@ -3921,8 +3921,8 @@ function renderReportsDetailPage(tabDef) {
         <tbody class="divide-y divide-brand-100 dark:divide-brand-800">
           ${filteredRows.length === 0 ? `<tr><td colspan="${headers.length}" class="p-4 text-center text-xs text-brand-700/50">${rows.length === 0 ? t("reports.noData") : t("reports.noResults")}</td></tr>` :
             filteredRows.map((r, ri) => `
-            <tr class="${ri % 2 === 1 ? "bg-brand-50 dark:bg-brand-800/40" : ""} ${filteredIds ? "cursor-pointer hover:bg-brand-100 dark:hover:bg-brand-800/70" : ""}" ${filteredIds ? `onclick="openClosedFolioModal('${filteredIds[ri]}')"` : ""}>
-              ${r.map((c, i) => `<td class="p-2.5 ${numericCols[i] ? "text-end font-medium" : "text-start"}">${typeof c === "number" ? (Number.isInteger(c) ? c : c.toFixed(2)) : c}</td>`).join("")}
+            <tr class="${ri % 2 === 1 ? "bg-brand-50 dark:bg-brand-800" : ""} ${filteredIds ? "cursor-pointer hover:bg-brand-50 dark:hover:bg-brand-800/40" : ""}" ${filteredIds ? `onclick="openClosedFolioModal('${filteredIds[ri]}')"` : ""}>
+              ${r.map((c, i) => `<td class="p-2.5 text-brand-800 dark:text-brand-100 ${numericCols[i] ? "text-end font-medium" : "text-start"}">${typeof c === "number" ? (Number.isInteger(c) ? c : c.toFixed(2)) : c}</td>`).join("")}
             </tr>`).join("")}
         </tbody>
       </table>
