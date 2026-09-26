@@ -802,7 +802,8 @@ const STR = {
               closedFolioTitle: "فوليو مغلق",
               checkoutTitle: "إتمام تسجيل الخروج", discountPercent: "نسبة الخصم %", discountAmount: "قيمة الخصم",
               netTotal: "الإجمالي بعد الخصم", confirmCheckout: "تأكيد تسجيل الخروج",
-              clearFolio: "مسح الفوليو بالكامل" },
+              clearFolio: "مسح الفوليو بالكامل",
+              confirmDeleteFolio: "سيتم حذف هذه الإقامة بالكامل نهائياً — اسم الضيف وتاريخ الدخول والخروج وكل حركاته المالية. لا يمكن التراجع عن هذا الإجراء. متأكد؟" },
     pos: { title: "نقطة البيع", orderType: "نوع الطلب", dineIn: "صالة", takeaway: "تيك أواي", delivery: "توصيل",
            villaService: "خدمة فيلا", selectVilla: "اختر الفيلا", cart: "السلة", empty: "السلة فارغة",
            subtotal: "الإجمالي الفرعي", vat: "نسبة الخدمة",
@@ -911,7 +912,8 @@ const STR = {
               closedFolioTitle: "Closed folio",
               checkoutTitle: "Confirm check-out", discountPercent: "Discount %", discountAmount: "Discount amount",
               netTotal: "Total after discount", confirmCheckout: "Confirm check-out",
-              clearFolio: "Delete entire folio" },
+              clearFolio: "Delete entire folio",
+              confirmDeleteFolio: "This will permanently delete this entire stay — guest name, check-in/check-out dates, and all its transactions. This cannot be undone. Are you sure?" },
     pos: { title: "POS", orderType: "Order type", dineIn: "Dine-in", takeaway: "Takeaway", delivery: "Delivery",
            villaService: "Villa Service", selectVilla: "Select villa", cart: "Cart", empty: "Cart is empty",
            subtotal: "Subtotal", vat: "Service",
@@ -1059,15 +1061,18 @@ const FolioService = {
     saveState();
     return folio.transactions.length < before;
   },
-  // Wipes every transaction on this one folio (and resets its discount).
-  // Gated the same as updateTransaction/removeTransaction above — only for
-  // fixing a folio that's a genuine mistake. Does not touch any other
-  // folio, stay, villa, or any other part of state.
-  clearAll(villaStayId) {
-    const folio = state.folios[villaStayId];
-    if (!folio) return false;
-    folio.transactions = [];
-    folio.discountPercent = 0;
+  // Deletes this one closed stay's folio AND its guest-stay history record
+  // (name, check-in/check-out) — the whole row disappears from Reports >
+  // Past guest stays, not just its charges/payments. Gated the same as
+  // updateTransaction/removeTransaction above (a genuine posting mistake,
+  // e.g. logged against the wrong guest entirely), and refuses to run on a
+  // stay that hasn't checked out yet, to never touch a currently-occupied
+  // villa. Does not touch any other stay, folio, or villa.
+  deleteStayAndFolio(villaStayId) {
+    const stay = state.villaStays.find((s) => s.id === villaStayId);
+    if (!stay || !stay.checkOut) return false;
+    state.villaStays = state.villaStays.filter((s) => s.id !== villaStayId);
+    delete state.folios[villaStayId];
     saveState();
     return true;
   },
@@ -2122,7 +2127,7 @@ function openVillaModal(villaId) {
       <span class="text-xs font-medium text-brand-700/70 dark:text-brand-100/60">${t("villas.discountPercent")}</span>
       <input id="f_folioDiscount" type="number" min="0" max="100" step="0.01" value="${totals.discountPercent || 0}"
         onchange="updateFolioDiscount('${stay.id}', this.value)"
-        class="w-24 rounded-lg border border-brand-300 dark:border-brand-700 dark:bg-brand-800 px-2 py-1 text-sm text-end" />
+        class="w-24 rounded-lg border border-brand-300 dark:border-brand-700 bg-white dark:bg-brand-800 text-brand-800 dark:text-brand-100 px-2 py-1 text-sm text-end" />
     </div>
     ${totals.discountPercent > 0 ? `
     <div class="flex justify-between text-xs text-red-600 mb-2 px-1">
@@ -2243,7 +2248,7 @@ function openClosedFolioModal(villaStayId) {
       <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${t("villas.balance")}</p><p class="font-semibold ${totals.balance > 0 ? 'text-red-600' : 'text-green-600'}">${cv(totals.balance)}</p></div>
     </div>
     ${!editable ? `<p class="mb-3 text-xs text-amber-600 dark:text-amber-400">🔒 ${t("villas.folioLockedNote")}</p>` : ""}
-    ${editable && txList.length > 0 ? `
+    ${editable ? `
     <button onclick="handleClearFolio('${villaStayId}')" class="mb-2 w-full rounded-lg border border-red-300 dark:border-red-700 text-red-600 px-4 py-2 text-sm">🗑️ ${t("villas.clearFolio")}</button>` : ""}
     <button onclick="closeModal()" class="w-full rounded-lg border border-brand-300 dark:border-brand-700 px-4 py-2 text-sm">${t("villas.close")}</button>
   `);
@@ -2283,14 +2288,15 @@ function handleDeleteFolioTx(villaStayId, txId) {
   openClosedFolioModal(villaStayId);
 }
 
-// Deletes every transaction on this one closed folio in one go (e.g. it was
-// posted against the wrong guest entirely). Only this folio is affected —
-// the stay record, the villa, and every other folio stay untouched.
+// Deletes this closed stay's folio AND its history row entirely (it
+// disappears from Reports > Past guest stays). Only this one stay is
+// affected — every other stay, folio, and villa is untouched.
 function handleClearFolio(villaStayId) {
   if (!canEditClosedFolio(currentUser)) return;
-  if (!confirmDelete()) return;
-  FolioService.clearAll(villaStayId);
-  openClosedFolioModal(villaStayId);
+  if (!confirm(t("villas.confirmDeleteFolio"))) return;
+  FolioService.deleteStayAndFolio(villaStayId);
+  closeModal();
+  render();
 }
 
 /* ============================================================
