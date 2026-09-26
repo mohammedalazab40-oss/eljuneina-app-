@@ -270,6 +270,7 @@ function normalizeUsers(s) {
       ...u,
       role: u.role === "staff" || u.role === "admin" ? u.role : "admin",
       permissions: Array.isArray(u.permissions) ? u.permissions : [],
+      canEditClosedFolios: u.canEditClosedFolios === true,
     }));
   }
   return s;
@@ -668,7 +669,7 @@ const AuthService = {
     }
     return user;
   },
-  async addUser({ username, password, role, permissions }) {
+  async addUser({ username, password, role, permissions, canEditClosedFolios }) {
     username = (username || "").trim();
     if (!username || !password) return { ok: false, error: "MISSING" };
     if (password.length < MIN_PASSWORD_LENGTH) return { ok: false, error: "TOO_SHORT" };
@@ -683,6 +684,7 @@ const AuthService = {
     const user = {
       id: uid("user"), username, passwordHash, createdAt: new Date().toISOString(),
       role: normalizedRole, permissions: normalizedPermissions,
+      canEditClosedFolios: normalizedRole === "admin" ? false : canEditClosedFolios === true,
     };
     state.users.push(user);
     saveState();
@@ -718,6 +720,17 @@ const AuthService = {
     const user = state.users.find((u) => u.id === userId);
     if (!user) return { ok: false, error: "NOT_FOUND" };
     user.permissions = Array.isArray(permissions) ? permissions.filter((p) => NAV_PERMISSION_KEYS.includes(p)) : [];
+    saveState();
+    return { ok: true };
+  },
+  // Separate from page permissions: whether this (non-admin) user may edit or
+  // delete transactions inside a folio that has already been closed
+  // (checked out) — an override granted per user for fixing mistakes, not a
+  // page they can navigate to.
+  setUserCanEditClosedFolios(userId, allowed) {
+    const user = state.users.find((u) => u.id === userId);
+    if (!user) return { ok: false, error: "NOT_FOUND" };
+    user.canEditClosedFolios = allowed === true;
     saveState();
     return { ok: true };
   },
@@ -784,7 +797,9 @@ const STR = {
               payments: "المدفوعات", balance: "الرصيد المستحق", addPayment: "إضافة دفعة", amount: "المبلغ",
               method: "طريقة الدفع", checkout: "تسجيل خروج (إغلاق الفولّيو)", close: "إغلاق", noTransactions: "لا توجد حركات بعد",
               since: "منذ", markAvailable: "تحويل إلى متاحة",
-              day: "يوم", otherCharges: "رسوم أخرى", printStatement: "طباعة كشف الحساب", noOrdersThisDay: "لا توجد طلبات مسجلة" },
+              day: "يوم", otherCharges: "رسوم أخرى", printStatement: "طباعة كشف الحساب", noOrdersThisDay: "لا توجد طلبات مسجلة",
+              editTransaction: "تعديل الحركة", note: "ملاحظة", folioLockedNote: "الفوليو مغلق — لا يمكنك تعديله أو حذف حركاته.",
+              closedFolioTitle: "فوليو مغلق" },
     pos: { title: "نقطة البيع", orderType: "نوع الطلب", dineIn: "صالة", takeaway: "تيك أواي", delivery: "توصيل",
            villaService: "خدمة فيلا", selectVilla: "اختر الفيلا", cart: "السلة", empty: "السلة فارغة",
            subtotal: "الإجمالي الفرعي", vat: "نسبة الخدمة",
@@ -827,7 +842,7 @@ const STR = {
                export: "إكسيل", product: "الصنف", print: "طباعة", reference: "المرجع (طاولة/فيلا)",
                overview: "نظرة عامة", search: "بحث", noResults: "لا توجد نتائج مطابقة",
                dateFrom: "من تاريخ", dateTo: "إلى تاريخ", category: "الفئة", paymentMethod: "طريقة الدفع",
-               back: "رجوع", pdf: "PDF", apply: "تطبيق", records: "عدد السجلات",
+               back: "رجوع", pdf: "PDF", apply: "تطبيق", records: "عدد السجلات", clickRowHint: "دوس على أي صف لعرض تفاصيل الفوليو",
                metric: "المؤشر", value: "القيمة", purchasesReport: "تقرير المشتريات",
                staysHistory: "سجل الإقامات السابقة", checkIn: "تسجيل الدخول", checkOut: "تسجيل الخروج",
                nights: "عدد الليالي", paid: "المدفوع",
@@ -855,6 +870,7 @@ const STR = {
                 usernameTaken: "اسم المستخدم مستخدم بالفعل", missingUserFields: "من فضلك أدخل اسم المستخدم وكلمة المرور",
                 role: "الصلاحية", admin: "أدمن", staff: "موظف", permissions: "الصفحات المسموح بالوصول إليها",
                 managePermissions: "إدارة الصلاحيات", lastAdminError: "يجب أن يظل هناك أدمن واحد على الأقل",
+                canEditClosedFolios: "السماح بتعديل/حذف حركات الفواتير بعد إغلاقها (تصحيح الأخطاء)",
                 villasMgmt: "إدارة الفيلات", addVilla: "إضافة فيلا", villaName: "اسم الفيلا", villaCode: "كود الفيلا",
                 productsMgmt: "إدارة الأصناف والفئات", addCategory: "إضافة فئة", addProduct: "إضافة صنف", editProduct: "تعديل الصنف",
                 categoryName: "اسم الفئة", productName: "اسم الصنف", category: "الفئة", price: "السعر", menuGroup: "مجموعة القائمة",
@@ -887,7 +903,9 @@ const STR = {
               payments: "Payments", balance: "Outstanding balance", addPayment: "Add payment", amount: "Amount",
               method: "Payment method", checkout: "Check out (close folio)", close: "Close", noTransactions: "No transactions yet",
               since: "since", markAvailable: "Mark available",
-              day: "Day", otherCharges: "Other charges", printStatement: "Print statement", noOrdersThisDay: "No orders logged" },
+              day: "Day", otherCharges: "Other charges", printStatement: "Print statement", noOrdersThisDay: "No orders logged",
+              editTransaction: "Edit transaction", note: "Note", folioLockedNote: "This folio is closed — you can't edit or delete its transactions.",
+              closedFolioTitle: "Closed folio" },
     pos: { title: "POS", orderType: "Order type", dineIn: "Dine-in", takeaway: "Takeaway", delivery: "Delivery",
            villaService: "Villa Service", selectVilla: "Select villa", cart: "Cart", empty: "Cart is empty",
            subtotal: "Subtotal", vat: "Service",
@@ -930,7 +948,7 @@ const STR = {
                export: "Excel", product: "Product", print: "Print", reference: "Reference (Table/Villa)",
                overview: "Overview", search: "Search", noResults: "No matching results",
                dateFrom: "From date", dateTo: "To date", category: "Category", paymentMethod: "Payment method",
-               back: "Back", pdf: "PDF", apply: "Apply", records: "Records",
+               back: "Back", pdf: "PDF", apply: "Apply", records: "Records", clickRowHint: "Click any row to view the folio's details",
                metric: "Metric", value: "Value", purchasesReport: "Purchases report",
                staysHistory: "Past guest stays", checkIn: "Check-in", checkOut: "Check-out",
                nights: "Nights", paid: "Paid",
@@ -958,6 +976,7 @@ const STR = {
                 usernameTaken: "That username is already taken", missingUserFields: "Please enter a username and password",
                 role: "Role", admin: "Admin", staff: "Staff", permissions: "Allowed pages",
                 managePermissions: "Manage permissions", lastAdminError: "There must always be at least one admin",
+                canEditClosedFolios: "Allow editing/deleting folio transactions after closing (error correction)",
                 villasMgmt: "Villas management", addVilla: "Add villa", villaName: "Villa name", villaCode: "Villa code",
                 productsMgmt: "Menu items & categories", addCategory: "Add category", addProduct: "Add item", editProduct: "Edit item",
                 categoryName: "Category name", productName: "Item name", category: "Category", price: "Price", menuGroup: "Menu group",
@@ -1000,6 +1019,28 @@ const FolioService = {
     const folio = this.getOrCreate(villaStayId);
     folio.transactions.push({ id: uid("ft"), type, amount, note: note || "", createdAt: new Date().toISOString(), meta: meta || null });
     saveState();
+  },
+  // Both of these are gated in the UI by canEditClosedFolio(currentUser) —
+  // they exist to fix a mistake after checkout (wrong amount, wrong charge),
+  // not for routine use, so the service layer doesn't re-check permissions
+  // itself (the same as every other write in this file).
+  updateTransaction(villaStayId, txId, { amount, note }) {
+    const folio = state.folios[villaStayId];
+    if (!folio) return false;
+    const tx = folio.transactions.find((x) => x.id === txId);
+    if (!tx) return false;
+    if (amount != null && !Number.isNaN(Number(amount))) tx.amount = Number(amount);
+    if (note != null) tx.note = note;
+    saveState();
+    return true;
+  },
+  removeTransaction(villaStayId, txId) {
+    const folio = state.folios[villaStayId];
+    if (!folio) return false;
+    const before = folio.transactions.length;
+    folio.transactions = folio.transactions.filter((x) => x.id !== txId);
+    saveState();
+    return folio.transactions.length < before;
   },
   totals(villaStayId) {
     const folio = state.folios[villaStayId];
@@ -1493,6 +1534,13 @@ function canAccess(user, navKey) {
 function accessibleNavKeys(user) {
   return NAV.map((n) => n.key).filter((key) => canAccess(user, key));
 }
+// A closed (checked-out) folio is normally locked. Admins can always fix
+// mistakes in it; a specific staff member can be granted the same right
+// individually (Settings > Users > Manage permissions) without making them
+// an admin or handing them any other page access.
+function canEditClosedFolio(user) {
+  return isAdmin(user) || !!(user && user.canEditClosedFolios);
+}
 
 function openMoreMenu() {
   openModal(`
@@ -1645,6 +1693,10 @@ function openAddUserModal() {
               ${t("nav." + key)}
             </label>`).join("")}
         </div>
+        <label class="mt-2 flex items-start gap-1.5 text-sm">
+          <input type="checkbox" id="f_user_edit_closed_folios" class="mt-0.5" />
+          <span>${t("settings.canEditClosedFolios")}</span>
+        </label>
       </div>
     </div>
     <div class="mt-4 flex gap-2">
@@ -1665,7 +1717,8 @@ async function submitAddUser() {
   const password = document.getElementById("f_user_password").value;
   const role = document.getElementById("f_user_role").value;
   const permissions = Array.from(document.querySelectorAll(".f_user_perm_check")).filter(c => c.checked).map(c => c.value);
-  const result = await AuthService.addUser({ username, password, role, permissions });
+  const canEditClosedFolios = document.getElementById("f_user_edit_closed_folios").checked;
+  const result = await AuthService.addUser({ username, password, role, permissions, canEditClosedFolios });
   if (!result.ok) {
     const key = result.error === "DUPLICATE" ? "usernameTaken"
       : result.error === "TOO_SHORT" ? "passwordTooShort"
@@ -1699,6 +1752,10 @@ function openManagePermissionsModal(userId) {
             ${t("nav." + key)}
           </label>`).join("")}
       </div>
+      <label class="mt-2 flex items-start gap-1.5 text-sm">
+        <input type="checkbox" id="f_perm_edit_closed_folios" class="mt-0.5" ${user.canEditClosedFolios ? "checked" : ""} />
+        <span>${t("settings.canEditClosedFolios")}</span>
+      </label>
     </div>
     <div class="flex gap-2">
       <button onclick="submitManagePermissions('${user.id}')" class="flex-1 rounded-lg bg-brand-800 py-2 text-sm text-white">${t("common.save")}</button>
@@ -1723,6 +1780,8 @@ function submitManagePermissions(userId) {
   if (role !== "admin") {
     const permissions = Array.from(document.querySelectorAll(".f_perm_check")).filter(c => c.checked).map(c => c.value);
     AuthService.setUserPermissions(userId, permissions);
+    const canEditClosedFolios = document.getElementById("f_perm_edit_closed_folios").checked;
+    AuthService.setUserCanEditClosedFolios(userId, canEditClosedFolios);
   }
   closeModal();
   navigate("settings");
@@ -2070,6 +2129,94 @@ function submitCheckOut(villaId, villaStayId) {
   if (posVillaStayId === villaStayId) { posVillaStayId = ""; posCart = []; }
   closeModal();
   navigate("villas");
+}
+
+/* ---------------- Closed folio viewer / editor (opened from Reports > Past guest stays) ----------------
+   A folio is locked once its stay has checked out. Everyone can open it to
+   review or reprint the statement; only an admin, or a staff member
+   explicitly granted the right (Settings > Users > Manage permissions), sees
+   the edit/delete controls needed to fix a posting mistake after the fact. */
+
+function openClosedFolioModal(villaStayId) {
+  const stay = state.villaStays.find(s => s.id === villaStayId);
+  if (!stay) return;
+  const villa = state.villas.find(v => v.id === stay.villaId);
+  const name = villa ? (state.lang === "ar" ? villa.nameAr : villa.nameEn) : "—";
+  const folio = FolioService.getOrCreate(villaStayId);
+  const totals = FolioService.totals(villaStayId);
+  const editable = canEditClosedFolio(currentUser);
+
+  const txList = folio.transactions.slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const txHtml = txList.length === 0 ? `<p class="p-3 text-xs text-brand-700/50">${t("villas.noTransactions")}</p>` : txList.map(tx => {
+    const isCharge = tx.type.startsWith("CHARGE");
+    return `
+      <div class="flex items-center gap-2 py-1.5 text-xs border-b border-brand-100 dark:border-brand-800 last:border-b-0">
+        <div class="flex-1 min-w-0">
+          <p class="truncate">${tx.note || tx.type}</p>
+          <p class="text-[10px] text-brand-700/50 dark:text-brand-100/40">${new Date(tx.createdAt).toLocaleString()}</p>
+        </div>
+        <span class="${isCharge ? "text-red-600" : "text-green-600"} font-medium whitespace-nowrap">${isCharge ? "+" : "-"}${cv(tx.amount)}</span>
+        ${editable ? `
+          <button onclick="openEditFolioTxModal('${villaStayId}','${tx.id}')" class="shrink-0 text-brand-700 dark:text-brand-100" title="${t('common.edit')}">✏️</button>
+          <button onclick="handleDeleteFolioTx('${villaStayId}','${tx.id}')" class="shrink-0 text-red-500" title="${t('common.delete')}">🗑️</button>
+        ` : ""}
+      </div>`;
+  }).join("");
+
+  openModal(`
+    <h2 class="mb-1 text-lg font-bold text-brand-800 dark:text-brand-100">${name} — ${t("villas.closedFolioTitle")}</h2>
+    <p class="mb-1 text-sm text-brand-700 dark:text-brand-100/80">${stay.guestName}${stay.phone ? " — " + stay.phone : ""}</p>
+    <p class="mb-4 text-xs text-brand-700/60 dark:text-brand-100/50">${new Date(stay.checkIn).toLocaleDateString()} → ${stay.checkOut ? new Date(stay.checkOut).toLocaleDateString() : ""}</p>
+
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-sm font-semibold">${t("villas.folio")}</h3>
+      <button onclick="printFolioInvoice('${villaStayId}')" class="text-xs text-brand-800 dark:text-brand-100 underline">🖨️ ${t("villas.printStatement")}</button>
+    </div>
+    <div class="max-h-64 overflow-y-auto rounded-lg border border-brand-200 dark:border-brand-700 p-2 mb-3">
+      ${txHtml}
+    </div>
+    <div class="grid grid-cols-3 gap-2 text-center mb-4">
+      <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${t("villas.charges")}</p><p class="font-semibold">${cv(totals.charges)}</p></div>
+      <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${t("villas.payments")}</p><p class="font-semibold">${cv(totals.payments)}</p></div>
+      <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${t("villas.balance")}</p><p class="font-semibold ${totals.balance > 0 ? 'text-red-600' : 'text-green-600'}">${cv(totals.balance)}</p></div>
+    </div>
+    ${!editable ? `<p class="mb-3 text-xs text-amber-600 dark:text-amber-400">🔒 ${t("villas.folioLockedNote")}</p>` : ""}
+    <button onclick="closeModal()" class="w-full rounded-lg border border-brand-300 dark:border-brand-700 px-4 py-2 text-sm">${t("villas.close")}</button>
+  `);
+}
+
+function openEditFolioTxModal(villaStayId, txId) {
+  if (!canEditClosedFolio(currentUser)) return;
+  const folio = state.folios[villaStayId];
+  const tx = folio && folio.transactions.find(x => x.id === txId);
+  if (!tx) return;
+  openModal(`
+    <h2 class="mb-4 text-lg font-bold text-brand-800 dark:text-brand-100">${t("villas.editTransaction")}</h2>
+    <div class="space-y-2">
+      <input id="f_tx_note" value="${escAttr(tx.note || "")}" placeholder="${t('villas.note')}" class="w-full rounded-lg border border-brand-300 dark:border-brand-700 dark:bg-brand-800 px-3 py-2 text-sm" />
+      <input id="f_tx_amount" type="number" min="0" step="0.01" value="${tx.amount}" placeholder="${t('villas.amount')}" class="w-full rounded-lg border border-brand-300 dark:border-brand-700 dark:bg-brand-800 px-3 py-2 text-sm" />
+    </div>
+    <div class="mt-4 flex gap-2">
+      <button onclick="submitEditFolioTx('${villaStayId}','${txId}')" class="flex-1 rounded-lg bg-brand-800 py-2 text-sm text-white">${t("common.save")}</button>
+      <button onclick="openClosedFolioModal('${villaStayId}')" class="rounded-lg border border-brand-300 dark:border-brand-700 px-4 py-2 text-sm">${t("common.cancel")}</button>
+    </div>
+  `);
+}
+
+function submitEditFolioTx(villaStayId, txId) {
+  if (!canEditClosedFolio(currentUser)) return;
+  const note = document.getElementById("f_tx_note").value.trim();
+  const amount = Number(document.getElementById("f_tx_amount").value);
+  if (Number.isNaN(amount) || amount < 0) return;
+  FolioService.updateTransaction(villaStayId, txId, { amount, note });
+  openClosedFolioModal(villaStayId);
+}
+
+function handleDeleteFolioTx(villaStayId, txId) {
+  if (!canEditClosedFolio(currentUser)) return;
+  if (!confirmDelete()) return;
+  FolioService.removeTransaction(villaStayId, txId);
+  openClosedFolioModal(villaStayId);
 }
 
 /* ============================================================
@@ -3567,6 +3714,7 @@ function reportsBuildTabData(tabKey) {
         title: t("reports.staysHistory"),
         headers: [t("villas.title"), t("reports.guest"), t("villas.phone"), t("reports.checkIn"), t("reports.checkOut"), t("reports.nights"), t("reports.total"), t("reports.paid"), t("reports.balance")],
         rows,
+        rowIds: history.map(x => x.stay.id), // lets renderReportsDetailPage make each row open its closed folio
       };
     }
     case "ordersReport": {
@@ -3667,8 +3815,13 @@ function renderReportsDetailHeader(tabDef, recordsCount, showSearch) {
 }
 
 function renderReportsDetailPage(tabDef) {
-  const { title, headers, rows } = reportsBuildTabData(tabDef.key);
-  const filteredRows = reportsFilterRows(rows);
+  const { title, headers, rows, rowIds } = reportsBuildTabData(tabDef.key);
+  // Filter rows and rowIds in lockstep so a clickable row still opens the
+  // right stay's folio after a search narrows the list.
+  const q = reportsSearch.trim().toLowerCase();
+  const keepIdx = !q ? rows.map((_, i) => i) : rows.map((_, i) => i).filter(i => rows[i].some(c => String(c).toLowerCase().includes(q)));
+  const filteredRows = keepIdx.map(i => rows[i]);
+  const filteredIds = rowIds ? keepIdx.map(i => rowIds[i]) : null;
   reportsActiveTitle = title;
   reportsActiveHeaders = headers;
   reportsActiveRows = filteredRows;
@@ -3685,12 +3838,13 @@ function renderReportsDetailPage(tabDef) {
         <tbody class="divide-y divide-brand-100 dark:divide-brand-800">
           ${filteredRows.length === 0 ? `<tr><td colspan="${headers.length}" class="p-4 text-center text-xs text-brand-700/50">${rows.length === 0 ? t("reports.noData") : t("reports.noResults")}</td></tr>` :
             filteredRows.map((r, ri) => `
-            <tr class="${ri % 2 === 1 ? "bg-brand-50 dark:bg-brand-800/40" : ""}">
+            <tr class="${ri % 2 === 1 ? "bg-brand-50 dark:bg-brand-800/40" : ""} ${filteredIds ? "cursor-pointer hover:bg-brand-100 dark:hover:bg-brand-800/70" : ""}" ${filteredIds ? `onclick="openClosedFolioModal('${filteredIds[ri]}')"` : ""}>
               ${r.map((c, i) => `<td class="p-2.5 ${numericCols[i] ? "text-end font-medium" : "text-start"}">${typeof c === "number" ? (Number.isInteger(c) ? c : c.toFixed(2)) : c}</td>`).join("")}
             </tr>`).join("")}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    ${filteredIds ? `<p class="mt-2 text-[11px] text-brand-700/60 dark:text-brand-100/50">${t("reports.clickRowHint")}</p>` : ""}`;
 }
 
 function renderReportsOverviewDetail() {
