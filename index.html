@@ -801,7 +801,8 @@ const STR = {
               editTransaction: "تعديل الحركة", note: "ملاحظة", folioLockedNote: "الفوليو مغلق — لا يمكنك تعديله أو حذف حركاته.",
               closedFolioTitle: "فوليو مغلق",
               checkoutTitle: "إتمام تسجيل الخروج", discountPercent: "نسبة الخصم %", discountAmount: "قيمة الخصم",
-              netTotal: "الإجمالي بعد الخصم", confirmCheckout: "تأكيد تسجيل الخروج" },
+              netTotal: "الإجمالي بعد الخصم", confirmCheckout: "تأكيد تسجيل الخروج",
+              clearFolio: "مسح الفوليو بالكامل" },
     pos: { title: "نقطة البيع", orderType: "نوع الطلب", dineIn: "صالة", takeaway: "تيك أواي", delivery: "توصيل",
            villaService: "خدمة فيلا", selectVilla: "اختر الفيلا", cart: "السلة", empty: "السلة فارغة",
            subtotal: "الإجمالي الفرعي", vat: "نسبة الخدمة",
@@ -909,7 +910,8 @@ const STR = {
               editTransaction: "Edit transaction", note: "Note", folioLockedNote: "This folio is closed — you can't edit or delete its transactions.",
               closedFolioTitle: "Closed folio",
               checkoutTitle: "Confirm check-out", discountPercent: "Discount %", discountAmount: "Discount amount",
-              netTotal: "Total after discount", confirmCheckout: "Confirm check-out" },
+              netTotal: "Total after discount", confirmCheckout: "Confirm check-out",
+              clearFolio: "Delete entire folio" },
     pos: { title: "POS", orderType: "Order type", dineIn: "Dine-in", takeaway: "Takeaway", delivery: "Delivery",
            villaService: "Villa Service", selectVilla: "Select villa", cart: "Cart", empty: "Cart is empty",
            subtotal: "Subtotal", vat: "Service",
@@ -1056,6 +1058,18 @@ const FolioService = {
     folio.transactions = folio.transactions.filter((x) => x.id !== txId);
     saveState();
     return folio.transactions.length < before;
+  },
+  // Wipes every transaction on this one folio (and resets its discount).
+  // Gated the same as updateTransaction/removeTransaction above — only for
+  // fixing a folio that's a genuine mistake. Does not touch any other
+  // folio, stay, villa, or any other part of state.
+  clearAll(villaStayId) {
+    const folio = state.folios[villaStayId];
+    if (!folio) return false;
+    folio.transactions = [];
+    folio.discountPercent = 0;
+    saveState();
+    return true;
   },
   totals(villaStayId) {
     const folio = state.folios[villaStayId];
@@ -2104,8 +2118,19 @@ function openVillaModal(villaId) {
     <div class="max-h-64 overflow-y-auto rounded-lg border border-brand-200 dark:border-brand-700 p-2 mb-3">
       ${renderFolioDetail(stay)}
     </div>
+    <div class="flex items-center justify-between gap-2 mb-3">
+      <span class="text-xs font-medium text-brand-700/70 dark:text-brand-100/60">${t("villas.discountPercent")}</span>
+      <input id="f_folioDiscount" type="number" min="0" max="100" step="0.01" value="${totals.discountPercent || 0}"
+        onchange="updateFolioDiscount('${stay.id}', this.value)"
+        class="w-24 rounded-lg border border-brand-300 dark:border-brand-700 dark:bg-brand-800 px-2 py-1 text-sm text-end" />
+    </div>
+    ${totals.discountPercent > 0 ? `
+    <div class="flex justify-between text-xs text-red-600 mb-2 px-1">
+      <span>${t("villas.discountAmount")}</span>
+      <span>-${cv(totals.discountAmount)}</span>
+    </div>` : ""}
     <div class="grid grid-cols-3 gap-2 text-center mb-4">
-      <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${t("villas.charges")}</p><p class="font-semibold">${cv(totals.charges)}</p></div>
+      <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${totals.discountPercent > 0 ? t("villas.netTotal") : t("villas.charges")}</p><p class="font-semibold">${cv(totals.discountPercent > 0 ? totals.netCharges : totals.charges)}</p></div>
       <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${t("villas.payments")}</p><p class="font-semibold">${cv(totals.payments)}</p></div>
       <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${t("villas.balance")}</p><p class="font-semibold ${totals.balance > 0 ? 'text-red-600' : 'text-green-600'}">${cv(totals.balance)}</p></div>
     </div>
@@ -2116,10 +2141,24 @@ function openVillaModal(villaId) {
     </div>
 
     <div class="flex gap-2 mt-4">
-      <button onclick="openCheckOutModal('${villaId}','${stay.id}')" class="flex-1 rounded-lg bg-red-700 py-2 text-sm text-white">${t("villas.checkout")}</button>
+      <button onclick="handleCheckOutClick('${villaId}','${stay.id}')" class="flex-1 rounded-lg bg-red-700 py-2 text-sm text-white">${t("villas.checkout")}</button>
       <button onclick="closeModal()" class="rounded-lg border border-brand-300 dark:border-brand-700 px-4 py-2 text-sm">${t("villas.close")}</button>
     </div>
   `);
+}
+
+// The discount % is entered once, here in the open folio (before check-out),
+// so it's calculated a single time rather than re-entered at check-out.
+// Saves immediately and re-renders this same modal with the new totals.
+function updateFolioDiscount(villaStayId, percent) {
+  FolioService.setDiscount(villaStayId, percent);
+  const stay = state.villaStays.find(s => s.id === villaStayId);
+  if (stay) openVillaModal(stay.villaId);
+}
+
+function handleCheckOutClick(villaId, villaStayId) {
+  if (!confirm(t("villas.confirmCheckout"))) return;
+  submitCheckOut(villaId, villaStayId);
 }
 
 function submitCheckIn(villaId) {
@@ -2147,56 +2186,6 @@ function submitCheckOut(villaId, villaStayId) {
   if (posVillaStayId === villaStayId) { posVillaStayId = ""; posCart = []; }
   closeModal();
   navigate("villas");
-}
-
-// Check-out confirmation with a manually-entered discount % applied to the
-// folio's charges before the final total/balance is shown. The discount is
-// saved on the folio (FolioService.setDiscount) the moment check-out is
-// confirmed, then VillaService.checkOut runs exactly as before.
-function openCheckOutModal(villaId, villaStayId) {
-  const folio = FolioService.getOrCreate(villaStayId);
-  const existingDiscount = folio.discountPercent || 0;
-  renderCheckOutModal(villaId, villaStayId, existingDiscount);
-}
-
-function renderCheckOutModal(villaId, villaStayId, discountPercent) {
-  const totals = FolioService.totals(villaStayId);
-  // Recompute with the (not-yet-saved) discount percent currently in the input,
-  // so the preview matches what will actually be saved on confirm.
-  const p = Number(discountPercent) || 0;
-  const discountAmount = totals.charges * (p / 100);
-  const netCharges = totals.charges - discountAmount;
-  const balance = netCharges - totals.payments;
-  openModal(`
-    <h2 class="mb-4 text-lg font-bold text-brand-800 dark:text-brand-100">${t("villas.checkoutTitle")}</h2>
-    <div class="space-y-2 text-sm mb-4">
-      <div class="flex justify-between"><span>${t("villas.charges")}</span><span>${cv(totals.charges)}</span></div>
-      <div class="flex items-center justify-between gap-2">
-        <span>${t("villas.discountPercent")}</span>
-        <input id="f_checkoutDiscount" type="number" min="0" max="100" step="0.01" value="${p}"
-          oninput="renderCheckOutModal('${villaId}','${villaStayId}', this.value)"
-          class="w-24 rounded-lg border border-brand-300 dark:border-brand-700 dark:bg-brand-800 px-2 py-1 text-sm text-end" />
-      </div>
-      <div class="flex justify-between text-red-600"><span>${t("villas.discountAmount")}</span><span>-${cv(discountAmount)}</span></div>
-      <div class="flex justify-between font-semibold border-t border-brand-200 dark:border-brand-700 pt-2"><span>${t("villas.netTotal")}</span><span>${cv(netCharges)}</span></div>
-      <div class="flex justify-between"><span>${t("villas.payments")}</span><span>${cv(totals.payments)}</span></div>
-      <div class="flex justify-between font-semibold"><span>${t("villas.balance")}</span><span class="${balance > 0 ? 'text-red-600' : 'text-green-600'}">${cv(balance)}</span></div>
-    </div>
-    <div class="flex gap-2">
-      <button onclick="confirmCheckOutWithDiscount('${villaId}','${villaStayId}')" class="flex-1 rounded-lg bg-red-700 py-2 text-sm text-white">${t("villas.confirmCheckout")}</button>
-      <button onclick="closeModal()" class="rounded-lg border border-brand-300 dark:border-brand-700 px-4 py-2 text-sm">${t("common.cancel")}</button>
-    </div>
-  `);
-  // Keep focus in the input across re-renders triggered by typing.
-  const input = document.getElementById("f_checkoutDiscount");
-  if (input) { input.focus(); const v = input.value; input.value = ""; input.value = v; }
-}
-
-function confirmCheckOutWithDiscount(villaId, villaStayId) {
-  const discountInput = document.getElementById("f_checkoutDiscount");
-  const percent = discountInput ? discountInput.value : 0;
-  FolioService.setDiscount(villaStayId, percent);
-  submitCheckOut(villaId, villaStayId);
 }
 
 /* ---------------- Closed folio viewer / editor (opened from Reports > Past guest stays) ----------------
@@ -2254,6 +2243,8 @@ function openClosedFolioModal(villaStayId) {
       <div class="rounded-lg bg-brand-50 dark:bg-brand-800 p-2"><p class="text-[10px] text-brand-700/60 dark:text-brand-100/50">${t("villas.balance")}</p><p class="font-semibold ${totals.balance > 0 ? 'text-red-600' : 'text-green-600'}">${cv(totals.balance)}</p></div>
     </div>
     ${!editable ? `<p class="mb-3 text-xs text-amber-600 dark:text-amber-400">🔒 ${t("villas.folioLockedNote")}</p>` : ""}
+    ${editable && txList.length > 0 ? `
+    <button onclick="handleClearFolio('${villaStayId}')" class="mb-2 w-full rounded-lg border border-red-300 dark:border-red-700 text-red-600 px-4 py-2 text-sm">🗑️ ${t("villas.clearFolio")}</button>` : ""}
     <button onclick="closeModal()" class="w-full rounded-lg border border-brand-300 dark:border-brand-700 px-4 py-2 text-sm">${t("villas.close")}</button>
   `);
 }
@@ -2289,6 +2280,16 @@ function handleDeleteFolioTx(villaStayId, txId) {
   if (!canEditClosedFolio(currentUser)) return;
   if (!confirmDelete()) return;
   FolioService.removeTransaction(villaStayId, txId);
+  openClosedFolioModal(villaStayId);
+}
+
+// Deletes every transaction on this one closed folio in one go (e.g. it was
+// posted against the wrong guest entirely). Only this folio is affected —
+// the stay record, the villa, and every other folio stay untouched.
+function handleClearFolio(villaStayId) {
+  if (!canEditClosedFolio(currentUser)) return;
+  if (!confirmDelete()) return;
+  FolioService.clearAll(villaStayId);
   openClosedFolioModal(villaStayId);
 }
 
