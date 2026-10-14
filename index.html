@@ -803,6 +803,7 @@ const STR = {
               checkoutTitle: "إتمام تسجيل الخروج", discountPercent: "نسبة الخصم %", discountAmount: "قيمة الخصم",
               netTotal: "الإجمالي بعد الخصم", confirmCheckout: "تأكيد تسجيل الخروج",
               clearFolio: "مسح الفوليو بالكامل",
+              confirmDeleteItem: "حذف هذا الصنف من الفوليو؟ سيتم خصم قيمته من الحساب.",
               confirmDeleteFolio: "سيتم حذف هذه الإقامة بالكامل نهائياً — اسم الضيف وتاريخ الدخول والخروج وكل حركاته المالية. لا يمكن التراجع عن هذا الإجراء. متأكد؟" },
     pos: { title: "نقطة البيع", orderType: "نوع الطلب", dineIn: "صالة", takeaway: "تيك أواي", delivery: "توصيل",
            villaService: "خدمة فيلا", selectVilla: "اختر الفيلا", cart: "السلة", empty: "السلة فارغة",
@@ -913,6 +914,7 @@ const STR = {
               checkoutTitle: "Confirm check-out", discountPercent: "Discount %", discountAmount: "Discount amount",
               netTotal: "Total after discount", confirmCheckout: "Confirm check-out",
               clearFolio: "Delete entire folio",
+              confirmDeleteItem: "Remove this item from the folio? Its amount will be deducted from the bill.",
               confirmDeleteFolio: "This will permanently delete this entire stay — guest name, check-in/check-out dates, and all its transactions. This cannot be undone. Are you sure?" },
     pos: { title: "POS", orderType: "Order type", dineIn: "Dine-in", takeaway: "Takeaway", delivery: "Delivery",
            villaService: "Villa Service", selectVilla: "Select villa", cart: "Cart", empty: "Cart is empty",
@@ -1060,6 +1062,47 @@ const FolioService = {
     folio.transactions = folio.transactions.filter((x) => x.id !== txId);
     saveState();
     return folio.transactions.length < before;
+  },
+  // Removes one item line (every unit of that product at that price on that
+  // meal date) from an OPEN stay's folio. The folio charge and the underlying
+  // POS order are both recalculated, so revenue/reports stay consistent; an
+  // order left with no items is removed entirely. Admin-gated in the UI.
+  removeItemLine(villaStayId, date, productId, price) {
+    const stay = state.villaStays.find((s) => s.id === villaStayId);
+    const folio = state.folios[villaStayId];
+    if (!stay || stay.checkOut || !folio) return false;
+    const matches = (it, fallbackDate) =>
+      (it.mealDate || fallbackDate) === date && it.productId === productId && it.price === price;
+    const sum = (items) => items.reduce((s, it) => s + it.price * it.qty, 0);
+    const SERVICE_DIVISOR = 1.2882; // same rule as OrderService.create
+    let removedAny = false;
+
+    for (const tx of folio.transactions.slice()) {
+      if (tx.type !== "CHARGE_RESTAURANT" || !tx.meta || !Array.isArray(tx.meta.items)) continue;
+      const fallback = tx.meta.mealDate || tx.createdAt.slice(0, 10);
+      const remaining = tx.meta.items.filter((it) => !matches(it, fallback));
+      if (remaining.length === tx.meta.items.length) continue;
+      removedAny = true;
+
+      const order = state.orders.find((o) => o.id === tx.meta.orderId);
+      if (remaining.length === 0) {
+        folio.transactions = folio.transactions.filter((x) => x.id !== tx.id);
+        if (order) state.orders = state.orders.filter((o) => o.id !== order.id);
+        continue;
+      }
+      const total = sum(remaining);
+      tx.meta.items = remaining;
+      tx.amount = total;
+      if (order) {
+        const subtotal = Math.round((total / SERVICE_DIVISOR) * 100) / 100;
+        order.items = order.items.filter((it) => !matches(it, order.mealDate));
+        order.subtotal = subtotal;
+        order.tax = Math.round((total - subtotal) * 100) / 100;
+        order.total = total;
+      }
+    }
+    if (removedAny) saveState();
+    return removedAny;
   },
   // Deletes this one closed stay's folio AND its guest-stay history record
   // (name, check-in/check-out) — the whole row disappears from Reports >
@@ -1997,7 +2040,7 @@ function groupFolioByDate(stay) {
         const catBucket = bucket.categories[catKey];
         const itemKey = it.productId + "@" + it.price;
         const name = state.lang === "ar" ? it.nameAr : it.nameEn;
-        if (!catBucket.items[itemKey]) catBucket.items[itemKey] = { name, qty: 0, price: it.price };
+        if (!catBucket.items[itemKey]) catBucket.items[itemKey] = { name, qty: 0, price: it.price, productId: it.productId };
         catBucket.items[itemKey].qty += it.qty;
         catBucket.subtotal += it.price * it.qty;
         bucket.dateTotal += it.price * it.qty;
@@ -2037,6 +2080,9 @@ function fmtFolioDate(dateStr) {
 
 function renderFolioDetail(stay) {
   const { dateGroups, otherCharges, payments } = groupFolioByDate(stay);
+  // Deleting an item line is for fixing a mistake before check-out, so it's
+  // admin-only (staff never see the button) and only offered while the stay is open.
+  const canDeleteItems = isAdmin(currentUser) && !stay.checkOut;
 
   const dateGroupsHtml = dateGroups.length === 0 ? "" : dateGroups.map((g, i) => `
     <div class="mb-3 rounded-lg border border-brand-200 dark:border-brand-700 overflow-hidden">
@@ -2051,7 +2097,7 @@ function renderFolioDetail(stay) {
             ${c.items.map((it) => `
               <div class="flex justify-between text-xs ps-2">
                 <span>${it.name} × ${it.qty}</span>
-                <span>${cv(it.price * it.qty)}</span>
+                <span>${cv(it.price * it.qty)}${canDeleteItems ? `<button onclick="handleRemoveFolioItem('${stay.id}','${g.date}','${encodeURIComponent(it.productId)}',${it.price})" title="${t('common.delete')}" style="margin-inline-start:.6rem;color:#dc2626;font-weight:700;font-size:15px;line-height:1;padding:0 .25rem;">✕</button>` : ""}</span>
               </div>`).join("")}
           </div>`).join("")}
       </div>
@@ -2127,7 +2173,7 @@ function openVillaModal(villaId) {
       <span class="text-xs font-medium text-brand-700/70 dark:text-brand-100/60">${t("villas.discountPercent")}</span>
       <input id="f_folioDiscount" type="number" min="0" max="100" step="0.01" value="${totals.discountPercent || 0}"
         onchange="updateFolioDiscount('${stay.id}', this.value)"
-        class="w-24 rounded-lg border border-brand-300 dark:border-brand-700 bg-white dark:bg-brand-800 text-brand-800 dark:text-brand-100 px-2 py-1 text-sm text-end" />
+        style="width:6rem;" class="rounded-lg border border-brand-300 dark:border-brand-700 bg-white dark:bg-brand-800 text-brand-800 dark:text-brand-100 px-2 py-1 text-sm text-end" />
     </div>
     ${totals.discountPercent > 0 ? `
     <div class="flex justify-between text-xs text-red-600 mb-2 px-1">
@@ -2155,6 +2201,14 @@ function openVillaModal(villaId) {
 // The discount % is entered once, here in the open folio (before check-out),
 // so it's calculated a single time rather than re-entered at check-out.
 // Saves immediately and re-renders this same modal with the new totals.
+function handleRemoveFolioItem(villaStayId, date, encProductId, price) {
+  if (!isAdmin(currentUser)) return;
+  if (!confirm(t("villas.confirmDeleteItem"))) return;
+  FolioService.removeItemLine(villaStayId, date, decodeURIComponent(encProductId), Number(price));
+  const stay = state.villaStays.find(s => s.id === villaStayId);
+  if (stay) openVillaModal(stay.villaId);
+}
+
 function updateFolioDiscount(villaStayId, percent) {
   FolioService.setDiscount(villaStayId, percent);
   const stay = state.villaStays.find(s => s.id === villaStayId);
