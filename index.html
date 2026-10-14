@@ -2109,7 +2109,7 @@ function renderFolioDetail(stay) {
       ${otherCharges.map((tx) => `
         <div class="flex justify-between text-xs">
           <span>${tx.note || tx.type}</span>
-          <span class="text-red-600">+${cv(tx.amount)}</span>
+          <span><span class="text-red-600">+${cv(tx.amount)}</span>${canDeleteItems ? `<button onclick="handleRemoveFolioCharge('${stay.id}','${tx.id}')" title="${t('common.delete')}" style="margin-inline-start:.6rem;color:#dc2626;font-weight:700;font-size:15px;line-height:1;padding:0 .25rem;">✕</button>` : ""}</span>
         </div>`).join("")}
     </div>`;
 
@@ -2207,6 +2207,20 @@ function handleRemoveFolioItem(villaStayId, date, encProductId, price) {
   FolioService.removeItemLine(villaStayId, date, decodeURIComponent(encProductId), Number(price));
   const stay = state.villaStays.find(s => s.id === villaStayId);
   if (stay) openVillaModal(stay.villaId);
+}
+
+// Removes one non-food charge (tour, manual charge...) from an open folio.
+// Admin-only, open stays only; charges only — payments are never deleted here.
+function handleRemoveFolioCharge(villaStayId, txId) {
+  if (!isAdmin(currentUser)) return;
+  const stay = state.villaStays.find(s => s.id === villaStayId);
+  if (!stay || stay.checkOut) return;
+  const folio = state.folios[villaStayId];
+  const tx = folio && folio.transactions.find(x => x.id === txId);
+  if (!tx || !tx.type.startsWith("CHARGE")) return;
+  if (!confirm(t("villas.confirmDeleteItem"))) return;
+  FolioService.removeTransaction(villaStayId, txId);
+  openVillaModal(stay.villaId);
 }
 
 function updateFolioDiscount(villaStayId, percent) {
